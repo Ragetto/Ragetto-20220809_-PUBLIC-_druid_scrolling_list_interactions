@@ -1,0 +1,208 @@
+---========================---
+---== LUA MODULE IMPORTS ==---
+---========================---
+local debugdraw = require "extensions.defold.debug-draw.debug-draw"
+local defmath = require "extensions.defold.defmath.defmath"
+local lume = require "extensions.external.lume.lume"
+local gui_extra = require "extensions.defold.gui_extra.gui_extra"
+local monarch = require "extensions.defold.monarch.monarch"
+local rc = require "extensions.defold.rendercam.rendercam"
+local csv = require "extensions.defold.csv-importer.csv-importer"
+local gp = require "gamedata.runtime_values"
+local druid = require "druid.druid"
+local my_style = require("gui.druid_styles.style_test")
+
+
+---========================---
+---== LOCAL VARIABLES ==---
+---========================---
+
+local scrolling_list_container, scrolling_list_content = "data_list_vertical", "data_list_vertical_content"
+local btn_prefab, btn_frame, btn_frame_anim, btn_text, btn_icon, img_item_selected, txt_item_selected = "prefab", "frame", "btn_medium_", "text", "icon", "img_item_selected", "txt_item_name"
+local list_nb_items_max, nb_sprites_max, data_list_nb_columns = 50, 20, 3
+
+
+---========================---
+---== LOCAL FUNCTIONS ==---
+---========================---
+
+local function create_vertical(self, data, index, data_list)
+	local instance = gui.clone_tree(self.btn_prefab)
+
+	-- selection of the item_id (to display the right visual)
+	local item_id1 = 0
+	if data > nb_sprites_max then item_id1 = rnd.range(1, nb_sprites_max) else item_id1 = data end
+
+	-------================================
+	----====== Creation of the "button" component
+	-------================================
+	local button = self.druid:new_button(instance[btn_frame], function()
+		self.scrolling_list_last_button_clicked_id = data
+		self.scrolling_list_button_clicked = true
+		print("Button clicked => "..self.scrolling_list_last_button_clicked_id.." / state = "..self.scrolling_list_elements[data].state)
+	end)
+	button:set_style(my_style)
+	button:set_click_zone(data_list.scroll.view_node)
+
+	-------================================
+	----====== The "external" data table that I use to make the link with the "physical" scrolling list (cf update function - where I'll need a "node deleted" callback)
+	-------================================
+	self.scrolling_list_elements[data] = {
+		id = data, -- the unique id,
+		node = btn_frame,
+		btn_prefab = instance[btn_prefab], -- the whole element
+		btn_frame = instance[btn_frame], -- the frame/background
+		btn_icon = instance[btn_icon], -- the image
+		btn_text = instance[btn_text], -- the text
+		screen_pos = vmath.vector3(), -- the position (so I can know exactly when each button is)
+		item_id = item_id1, -- will be used with the
+		state = 1 -- 0: locked (greyed) / 1: unlocked / 2: selected
+	}
+
+	-- button prefab
+	gui.set_enabled(instance[btn_prefab], true)
+
+	-- button frame (background
+	gui.play_flipbook(instance[btn_frame], btn_frame_anim..self.scrolling_list_elements[data].state)
+	
+	-- button image (custo item)
+	gui.play_flipbook(instance[btn_icon], "item_"..item_id1)
+
+	-- button text
+	gui.set_text(instance[btn_text], "Item "..data)
+
+	return instance[btn_prefab], button
+end
+
+
+---========================---
+---== DEFOLD FUNCTIONS ==---
+---========================---
+
+function init(self)
+	
+	-------================================
+	----====== SCROLLING LIST PARAMETERS
+	-------================================
+	
+	self.scrolling_list_elements = {}
+	self.scrolling_list_last_button_clicked_id, self.scrolling_list_last_button_clicked_id_saved, self.scrolling_list_button_hover_id = 0, 0, 0
+	self.scrolling_list_button_clicked = false
+
+	-------================================
+	----====== SCROLLING LIST CREATION
+	-------================================
+	
+	self.druid = druid.new(self)
+
+	self.data_set = {}
+	for i = 1, list_nb_items_max do
+		table.insert(self.data_set, i)
+	end
+
+	self.btn_prefab = gui.get_node(btn_prefab)
+	gui.set_enabled(self.btn_prefab, false)
+
+	local scroll_vertical = self.druid:new_scroll(scrolling_list_container, scrolling_list_content)
+	scroll_vertical:set_horizontal_scroll(false)
+	local grid_vertical = self.druid:new_static_grid(scrolling_list_content,btn_prefab,data_list_nb_columns)
+
+	self.data_list_vertical = self.druid:new_data_list(scroll_vertical, grid_vertical, create_vertical)
+	self.data_list_vertical:set_data(self.data_set)
+
+
+	-------================================
+	----====== DEBUG
+	-------================================
+	--[[--
+	print("nb elements in scrolling list = "..#self.scrolling_list_elements)
+	for i=1,#self.scrolling_list_elements do
+		self.scrolling_list_elements[i].screen_pos = gui.get_screen_position(self.scrolling_list_elements[i].node)
+		print("self.scrolling_list_elements["..i.."].id = "..self.scrolling_list_elements[i].id.." / screen_pos = "..self.scrolling_list_elements[i].screen_pos)
+	end
+	--]]--
+end -- of init function
+
+
+function final(self)
+	self.druid:final()
+end
+
+
+function update(self, dt)
+	self.druid:update(dt)
+	----------------------------------------
+	
+	-------================================
+	----====== LIST ELEMENT STATES
+	-------================================
+	-- HERE IS A USE CASE OF WHAT I WANT TO DO
+	-- I want to change the aspect (= animation) of the button frame according to its "state" => - ex: yellow if selected
+	-- I update the animation at each frame, which is not necessary or elegant, I know... but it shows the issue that could occurs in various contexts.
+
+	-- PROBLEM: the node are deleted if they move outside the container (which is great in terms of performance I suppose) but I can't know when exactly...
+
+	-- If I had a "node deleted" callback (or anything similar), I would set the deleted node as "not on_screen" in the self.scrolling_list_elements table
+	-- and would easily exclude it from the loop below, so the scrolling list wouldn't crash
+	-- ex: if self.scrolling_list_elements[i].on_screen then...
+	-- (and then set on_screen to "true" when the node is created again)
+
+	-- BUT... I'm probably not supposed to do it that way :) maybe Druid offers better options
+
+	---[[--
+	--print("nb_elements = ".. #self.scrolling_list_elements)
+	for i=1,#self.scrolling_list_elements do
+		local index = self.scrolling_list_last_button_clicked_id
+		if index == i then self.scrolling_list_elements[i].state = 2 else self.scrolling_list_elements[i].state = 1 end
+
+		-- we call the right button animation, based on the state (ex: btn_medium_1 or btn_medium_2)
+		local state = self.scrolling_list_elements[i].state
+		gui.play_flipbook(self.scrolling_list_elements[i].btn_frame, btn_frame_anim..state)
+	end
+	--]]--
+
+	
+
+	-------================================
+	----====== DEBUG
+	-------================================
+	
+	--[[--
+	local DEBUG_pos_x, DEBUG_pos_y, DEBUG_pos_y_diff = 10, 800, 15
+	print("nb elements in scrolling list = "..#self.scrolling_list_elements)
+	for i=1,#self.scrolling_list_elements do
+		self.scrolling_list_elements[i].screen_pos = gui.get_screen_position(self.scrolling_list_elements[i].btn_frame)
+		debugdraw.text("self.scrolling_list_elements["..i.."].id = "..self.scrolling_list_elements[i].id.." / screen_pos = "..self.scrolling_list_elements[i].screen_pos, DEBUG_pos_x, DEBUG_pos_y, color)
+		DEBUG_pos_y = DEBUG_pos_y - DEBUG_pos_y_diff
+	end
+	--]]--
+
+	debugdraw.text("hover id = "..self.scrolling_list_button_hover_id, 10, 700, color)
+	
+end -- of update function
+
+
+function on_message(self, message_id, message, sender)
+	self.druid:on_message(message_id, message, sender)
+end
+
+
+function on_input(self, action_id, action)
+
+	-------================================
+	----====== HOVER
+	-------================================
+	-- I don't know get to use it in Druid, so...
+	-- I keep using Defold stuff (but same issue with the deleted nodes)
+	
+	self.scrolling_list_button_hover_id  = 0
+	for i=1,#self.scrolling_list_elements do
+		local node = self.scrolling_list_elements[i].btn_prefab, false
+		if gui.pick_node(node,action.screen_x,action.screen_y) then
+			--print("over item"..self.scrolling_list_elements[i].id.." / ["..action.screen_x..";"..action.screen_y.."]")
+			self.scrolling_list_button_hover_id = self.scrolling_list_elements[i].id
+		end
+	end
+
+	return self.druid:on_input(action_id, action)
+end

@@ -1,0 +1,213 @@
+---========================---
+---== LUA MODULE IMPORTS ==---
+---========================---
+local debugdraw = require "extensions.defold.debug-draw.debug-draw"
+local defmath = require "extensions.defold.defmath.defmath"
+local lume = require "extensions.external.lume.lume"
+local gui_extra = require "extensions.defold.gui_extra.gui_extra"
+local monarch = require "extensions.defold.monarch.monarch"
+local rc = require "extensions.defold.rendercam.rendercam"
+local csv = require "extensions.defold.csv-importer.csv-importer"
+local gp = require "gamedata.runtime_values"
+
+local druid = require "druid.druid"
+local my_style = require("gui.druid_styles.style_1")
+
+local btn_prefab, btn_frame, btn_frame_anim, btn_text, btn_icon = "prefab", "frame", "btn_medium_", "text", "icon"
+local scrolling_list_container, scrolling_list_content = "data_list_vertical", "data_list_vertical_content"
+local list_nb_items_max, nb_sprites_max, data_list_nb_columns = 100, 10, 3
+
+
+local function ultra_basic_callback()
+	print("ultra basic callback!")
+end
+
+local function create_vertical(self, data, index, data_list)
+	local instance = gui.clone_tree(self.btn_prefab)
+
+	local item_id1 = 0
+	if data > nb_sprites_max then item_id1 = rnd.range(1, nb_sprites_max) else item_id1 = data end
+	
+	-- Since we have only 1 component, we can return this one
+	-- If we have several components, we should create custom component to
+	-- union them all
+	local button = self.druid:new_button(instance[btn_frame], function()
+		self.scrolling_list_button_clicked_id = data
+		self.scrolling_list_button_clicked = true
+		print("Button clicked => "..self.scrolling_list_button_clicked_id)
+	end)
+	button:set_data(data)
+	button.on_click:subscribe(ultra_basic_callback)
+	button:set_style(my_style)
+	button:set_click_zone(data_list.scroll.view_node)
+
+	-- TEST
+	
+	-- button prefab
+	gui.set_enabled(instance[btn_prefab], true)
+
+	-- button image (custo item)
+	gui.play_flipbook(instance[btn_icon], "item_"..item_id1)
+
+	-- data table
+	self.scrolling_list_elements[data] = {
+		btn_prefab = instance[btn_prefab],
+		btn_frame = instance[btn_frame],
+		btn_icon = instance[btn_icon],
+		btn_text = instance[btn_text],
+		id = data,
+		screen_pos = vmath.vector3(),
+		item_id = item_id1,
+		state = 1 -- 0: locked / 1: unlocked / 2: selected
+	}
+
+	-- button frame
+	--gui.set_size(instance[prefab], vmath.vector3(200, 50 + math.random(100), 0))
+	--print("pouet > "..data)
+	--print(btn_frame_anim..self.scrolling_list_elements[data].state)
+	gui.play_flipbook(instance[btn_frame], btn_frame_anim..self.scrolling_list_elements[data].state)
+	gui.set_text(instance[btn_text], "Item "..data)
+
+	return instance[btn_prefab], button
+end
+
+---========================---
+---========================---
+
+function init(self)
+	--msg.post(".", "acquire_input_focus")
+	--msg.post("@render:", "use_fixed_fit_projection", { near = -1, far = 1 })
+
+	self.scrolling_list_elements = {}
+	self.scrolling_list_button_clicked_id, self.scrolling_list_button_clicked_id_saved = 0, 0
+	
+	self.scrolling_list_button_clicked = false
+
+	-------================================
+	----====== SCROLLING LIST CREATION
+	-------================================
+	self.druid = druid.new(self)
+
+	self.data_set = {}
+	for i = 1, list_nb_items_max do
+		table.insert(self.data_set, i)
+	end
+
+	self.btn_prefab = gui.get_node(btn_prefab)
+	gui.set_enabled(self.btn_prefab, false)
+
+	local scroll_vertical = self.druid:new_scroll(scrolling_list_container, scrolling_list_content)
+		:set_horizontal_scroll(false)
+	local grid_vertical = self.druid:new_static_grid(scrolling_list_content, btn_prefab, data_list_nb_columns)
+
+	self.data_list_vertical = self.druid:new_data_list(scroll_vertical, grid_vertical, create_vertical)
+	self.data_list_vertical:set_data(self.data_set)
+		--.hover:subscribe(ultra_basic_callback)
+
+	self.data_list_vertical.on_scroll_progress_change:subscribe(function(_, progress)
+		print("scroll progress")
+		--self.slider_simple:set(progress, true)
+	end)	
+		
+	--self.data_list_vertical:on_remove()
+	
+	--self.data_list_vertical:scroll_to_percent(100)
+	
+	-------================================
+	----====== FUNCTION TESTS
+	-------================================
+	
+	print("amount of data = "..self.data_list_vertical:get_length())
+	
+
+	-------================================
+	----====== DEBUG
+	-------================================
+	--[[--
+	print("nb elements in scrolling list = "..#self.scrolling_list_elements)
+	for i=1,#self.scrolling_list_elements do
+		self.scrolling_list_elements[i].screen_pos = gui.get_screen_position(self.scrolling_list_elements[i].node)
+		print("self.scrolling_list_elements["..i.."].id = "..self.scrolling_list_elements[i].id.." / screen_pos = "..self.scrolling_list_elements[i].screen_pos)
+	end
+	--]]--
+end -- of init function
+
+
+function final(self)
+	self.druid:final()
+end -- of final function
+
+
+function update(self, dt)
+	self.druid:update(dt)
+	----------------------------------------
+	
+	-------================================
+	----====== LIST ELEMENT SELECTION
+	-------================================
+	
+	if self.scrolling_list_button_clicked then
+
+		local index = self.scrolling_list_button_clicked_id
+		self.scrolling_list_button_clicked_id_saved = self.scrolling_list_elements[index].item_id
+		print("self.scrolling_list_button_clicked_id = "..index)
+		print("selected element => instance = "..tostring(self.scrolling_list_elements[index].node).." / id = "..self.scrolling_list_elements[index].id.." / screen_pos = "..self.scrolling_list_elements[index].screen_pos)
+
+		self.scrolling_list_button_clicked = false
+
+	end
+
+	
+	-------================================
+	----====== LIST ELEMENT APPEARANCE
+	-------================================
+
+	--[[--
+	for i=1,#self.scrolling_list_elements do
+		local idem_id = self.scrolling_list_elements[i].item_id
+		gui.play_flipbook(self.scrolling_list_elements[i].btn_icon, "item_"..idem_id)
+	end
+	--]]--
+	
+	-------================================
+	----====== SELECTED ELEMENT DISPLAY
+	----------- (top of the screen)
+	-------================================
+
+	local node, index = gui.get_node("img_item_selected"), self.scrolling_list_button_clicked_id
+	--print("index = "..index)
+	local item_id = 0
+	if index > 0 then item_id = self.scrolling_list_elements[index].item_id end 
+	gui.play_flipbook(node, "item_"..self.scrolling_list_button_clicked_id_saved)
+
+	local node,text = gui.get_node("txt_item_name"),"item_"..self.scrolling_list_button_clicked_id
+	if self.scrolling_list_button_clicked_id == 0 then text = "" end 
+	gui.set_text(node,text)
+	
+	
+	-------================================
+	----====== DEBUG
+	-------================================
+
+	
+end -- of update function
+
+
+function on_message(self, message_id, message, sender)
+	self.druid:on_message(message_id, message, sender)
+end -- of on_message function
+
+
+function on_input(self, action_id, action)
+
+	--[[--
+	if action_id == hash("touch") and action.pressed then
+
+	elseif action_id == hash("touch_right") and action.pressed then
+		--self.druid:remove("data_list_vertical")
+	end
+	--]]--
+
+	return self.druid:on_input(action_id, action)
+	
+end -- of on_input function
